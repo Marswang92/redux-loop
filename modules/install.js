@@ -15,14 +15,14 @@ export function install() {
     const liftReducer = (reducer) => (state, action) => {
       const result = reducer(state, action)
       const [model, cmd] = liftState(result)
-      cmdsQueue.push({ originalAction: action, cmd })
+      cmdsQueue.push(cmd)
       return model
     }
 
     const store = next(liftReducer(reducer), initialModel, enhancer)
 
-    const runCmds = (queue) => {
-      const promises = queue.map(runCmd).filter((x) => x)
+    const runCmds = (queue, originalActions) => {
+      const promises = queue.map((cmd) => runCmd({ originalActions, cmd })).filter((x) => x)
       if (promises.length === 0) {
         return Promise.resolve()
       } else if (promises.length === 1) {
@@ -32,7 +32,7 @@ export function install() {
       }
     }
 
-    const runCmd = ({ originalAction, cmd }) => {
+    const runCmd = ({ originalActions, cmd }) => {
       const cmdPromise = cmdToPromise(cmd, dispatch, store.getState)
 
       if (!cmdPromise) return null
@@ -40,19 +40,19 @@ export function install() {
       return cmdPromise
         .then((actions) => {
           if (!actions.length) return
-          return Promise.all(actions.map(dispatch))
+          return Promise.all(actions.map((action) => dispatch(action, originalActions)))
         })
         .catch((error) => {
-          console.error(loopPromiseCaughtError(originalAction.type, error))
+          console.error(loopPromiseCaughtError(originalActions.map(x => x.type).concat('>>'), error))
           throw error
         })
     }
 
-    const dispatch = (action) => {
-      store.dispatch(action)
+    const dispatch = (action, originalActions = []) => {
+      store.dispatch(action, originalActions)
       const cmdsToRun = cmdsQueue
       cmdsQueue = []
-      return runCmds(cmdsToRun)
+      return runCmds(cmdsToRun, originalActions.concat(action))
     }
 
     const replaceReducer = (reducer) => {
@@ -60,7 +60,7 @@ export function install() {
     }
 
     runCmd({
-      originalAction: { type: '@@ReduxLoop/INIT' },
+      originalActions: [ { type: '@@ReduxLoop/INIT' } ],
       cmd: initialCmd
     })
 
